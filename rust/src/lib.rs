@@ -1,35 +1,21 @@
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
-use std::{
-    collections::{
-        BTreeMap,
-        HashMap,
-    },
-    sync::Arc,
-};
-
 #[cfg(debug_assertions)]
 use android_logger::Config;
 use async_once_cell::OnceCell;
-use convex::{
-    ConvexClient,
-    ConvexClientBuilder,
-    FunctionResult,
-    Value,
-};
+use convex::{ConvexClient, ConvexClientBuilder, FunctionResult, Value};
+use flutter_rust_bridge::{frb, DartFnFuture};
 use futures::{
-    channel::oneshot::{
-        self,
-        Sender,
-    },
-    pin_mut,
-    select_biased,
-    FutureExt,
-    StreamExt,
+    channel::oneshot::{self, Sender},
+    pin_mut, select_biased, FutureExt, StreamExt,
 };
 use log::debug;
 #[cfg(debug_assertions)]
 use log::LevelFilter;
 use parking_lot::Mutex;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum ClientError {
@@ -53,11 +39,28 @@ impl From<anyhow::Error> for ClientError {
         }
     }
 }
+/// Replaced the QuerySubscriber trait with a struct to be compatible with
+/// with flutter_rust_bridge.
+pub struct QuerySubscriber {
+    on_update: Box<dyn Fn(String) -> DartFnFuture<()> + Send + Sync + 'static>,
+    on_error: Box<dyn Fn(String, Option<String>) -> DartFnFuture<()> + Send + Sync + 'static>,
+}
 
-pub trait QuerySubscriber: Send + Sync {
-    fn on_update(&self, value: String) -> ();
-
-    fn on_error(&self, message: String, value: Option<String>) -> ();
+impl QuerySubscriber {
+    #[frb(sync)]
+    pub fn new(
+        on_update: impl Fn(String) -> DartFnFuture<()> + Send + Sync + 'static,
+        on_error: impl Fn(String, Option<String>) -> DartFnFuture<()> + Send + Sync + 'static,
+    ) -> Self {
+        QuerySubscriber {
+            on_update: Box::new(on_update),
+            on_error: Box::new(on_error),
+        }
+    }
+    #[frb(sync)]
+    pub fn to_arc(self) -> Arc<QuerySubscriber> {
+        Arc::new(self)
+    }
 }
 
 pub struct SubscriptionHandle {
@@ -65,12 +68,14 @@ pub struct SubscriptionHandle {
 }
 
 impl SubscriptionHandle {
+    #[frb(sync)]
     pub fn new(cancel_sender: Sender<()>) -> Self {
         SubscriptionHandle {
             cancel_sender: Mutex::new(Some(cancel_sender)),
         }
     }
 
+    #[frb(sync)]
     pub fn cancel(&self) {
         if let Some(sender) = self.cancel_sender.lock().take() {
             sender.send(()).unwrap();
@@ -99,6 +104,7 @@ impl MobileConvexClient {
     ///
     /// The `client_id` should be a string representing the name and version of
     /// the foreign client.
+    #[frb(sync)]
     pub fn new(deployment_url: String, client_id: String) -> MobileConvexClient {
         #[cfg(debug_assertions)]
         android_logger::init_once(Config::default().with_max_level(LevelFilter::Trace));
@@ -137,7 +143,7 @@ impl MobileConvexClient {
                     .await?
             })
             .await
-            .map(|client_ref| client_ref.clone())
+            .cloned()
     }
 
     /// Execute a one-shot query against the Convex backend.
@@ -164,8 +170,8 @@ impl MobileConvexClient {
         &self,
         name: String,
         args: HashMap<String, String>,
-        subscriber: Arc<dyn QuerySubscriber>,
-    ) -> Result<Arc<SubscriptionHandle>, ClientError> {
+        subscriber: Arc<QuerySubscriber>,
+    ) -> Result<WrappedSubscriptionHandle, ClientError> {
         Ok(self.internal_subscribe(name, args, subscriber).await?)
     }
 
@@ -173,8 +179,8 @@ impl MobileConvexClient {
         &self,
         name: String,
         args: HashMap<String, String>,
-        subscriber: Arc<dyn QuerySubscriber>,
-    ) -> anyhow::Result<Arc<SubscriptionHandle>> {
+        subscriber: Arc<QuerySubscriber>,
+    ) -> anyhow::Result<WrappedSubscriptionHandle> {
         let mut client = self.connected_client().await?;
         debug!("New subscription");
         let mut subscription = client
@@ -191,19 +197,19 @@ impl MobileConvexClient {
                         match new_val {
                             FunctionResult::Value(value) => {
                                 debug!("Updating with {value:?}");
-                                subscriber.on_update(serde_json::to_string(
+                                (subscriber.on_update)(serde_json::to_string(
                                     &serde_json::Value::from(value)
-                                ).unwrap())
+                                ).unwrap()).await
                             },
                             FunctionResult::ErrorMessage(message) => {
-                                subscriber.on_error(message, None)
+                                (subscriber.on_error)(message, None).await
                             },
-                            FunctionResult::ConvexError(error) => subscriber.on_error(
+                            FunctionResult::ConvexError(error) => (subscriber.on_error)(
                                 error.message,
                                 Some(serde_json::ser::to_string(
                                     &serde_json::Value::from(error.data)
                                 ).unwrap())
-                            )
+                            ).await
                         }
                     },
                     _ = cancel_fut => {
@@ -213,7 +219,9 @@ impl MobileConvexClient {
             }
             debug!("Subscription canceled");
         });
-        Ok(Arc::new(SubscriptionHandle::new(cancel_sender)))
+        Ok(WrappedSubscriptionHandle::new(Arc::new(
+            SubscriptionHandle::new(cancel_sender),
+        )))
     }
 
     /// Run a mutation against the Convex backend.
@@ -285,6 +293,25 @@ impl MobileConvexClient {
     }
 }
 
+/// Becuase we cannot transfer the Arc<SubscriptionHandle> from rust to dart, we need to wrap it in a struct.
+/// That can be then be used from Dart by calling the cancel method.
+pub struct WrappedSubscriptionHandle {
+    handle: Arc<SubscriptionHandle>,
+}
+
+impl WrappedSubscriptionHandle {
+    fn new(handle: Arc<SubscriptionHandle>) -> Self {
+        WrappedSubscriptionHandle { handle }
+    }
+
+    #[frb(sync)]
+    pub fn cancel(&self) {
+        if let Some(sender) = self.handle.cancel_sender.lock().take() {
+            sender.send(()).unwrap();
+        }
+    }
+}
+
 fn parse_json_args(raw_args: HashMap<String, String>) -> BTreeMap<String, Value> {
     raw_args
         .into_iter()
@@ -311,8 +338,6 @@ fn handle_direct_function_result(result: FunctionResult) -> Result<String, Clien
         FunctionResult::ErrorMessage(msg) => Err(ClientError::ServerError { msg }),
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

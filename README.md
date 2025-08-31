@@ -1,7 +1,10 @@
 A fork of the convex rust client for use with dart.
-This fork does not modify any functional parts of the client. 
-This fork only replaces `uniffi` with `flutter_rust_bridge` to 
-create better dart<>rust bindings for the convex client. 
+Very minor modifications were made to the rust client to make it work with `flutter_rust_bridge`.
+
+1. Remove `uniffi` from the dependencies and replace it with `flutter_rust_bridge`.
+1. Replace the `QuerySubscriber` trait with a struct.
+2. Create a method on the `QuerySubscriber` struct to create a `Arc<QuerySubscriber>` which can be used to create a subscription from the dart side.
+3. Subscribing now returns a `WrappedSubscriptionHandle` which contains a `Arc<SubscriptionHandle>` instead of returning a raw `Arc<SubscriptionHandle>` directly.
 
 ---
 
