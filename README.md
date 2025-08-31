@@ -1,3 +1,10 @@
+A fork of the convex rust client for use with dart.
+This fork does not modify any functional parts of the client. 
+This fork only replaces `uniffi` with `flutter_rust_bridge` to 
+create better dart<>rust bindings for the convex client. 
+
+---
+
 # Convex Mobile Libraries
 
 This repo contains code for building mobile libraries for Convex.
