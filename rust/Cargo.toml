@@ -1,17 +1,19 @@
 [package]
-name = "convex-mobile"
+name = "convex_dart_rs"
 version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-uniffi = { version = "0.28", features = ["cli"] }
+flutter_rust_bridge = "=2.11.1"
 tokio = { version = "1", features = ["full"] }
 android_logger = { version = "0.14.1" }
 log = { version = "0.4.21" }
-convex = { version = "0.9", default-features = false, features = ["rustls-tls-webpki-roots"] }
+convex = { version = "0.9", default-features = false, features = [
+    "rustls-tls-webpki-roots",
+] }
 anyhow = { version = "1.0.86" }
 thiserror = { version = "1.0.61" }
-tokio-stream = { features = [ "io-util", "sync" ], version = "0.1" }
+tokio-stream = { features = ["io-util", "sync"], version = "0.1" }
 once_cell = { version = "1.19.0" }
 futures = { version = "0.3" }
 parking_lot = { version = "0.12.3" }
@@ -21,13 +23,10 @@ serde_json = { version = "1.0.120" }
 [dev-dependencies]
 maplit = { version = "1" }
 
-[build-dependencies]
-uniffi = { version = "0.28", features = [ "build" ]}
 
 [lib]
 crate-type = ["cdylib", "lib", "staticlib"]
 name = "convexmobile"
 
-[[bin]]
-name = "uniffi-bindgen"
-path = "uniffi-bindgen.rs"
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

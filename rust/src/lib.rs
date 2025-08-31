@@ -1,3 +1,4 @@
+mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 use std::{
     collections::{
         BTreeMap,
@@ -311,7 +312,7 @@ fn handle_direct_function_result(result: FunctionResult) -> Result<String, Clien
     }
 }
 
-uniffi::include_scaffolding!("convex-mobile");
+
 
 #[cfg(test)]
 mod tests {
